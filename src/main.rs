@@ -117,6 +117,18 @@ fn main() {
                     round_type = "hablada";
                 }
                 println!("Jugador {}: 'Escuché que la ronda {} será {}'", player + 1, round + 1, round_type);
+                let player_choice_number = rand::thread_rng().gen_range(0, 2);
+                let player_choice;
+                if player_choice_number == 0 {
+                    player_choice = "Paso";
+                }
+                else {
+                    player_choice = "Oxidado";
+                }
+                player_general_barrier.wait();
+                if round_type_number == 1 {
+                    println!("Jugador {}: {}", player + 1, player_choice);
+                }
                 player_general_barrier.wait();
             }
         });
@@ -146,6 +158,7 @@ fn main() {
                 tx_table_player[player as usize].send(player_type_number).unwrap();
             }
 
+            table_barrier.wait();
             table_barrier.wait();
         }
 
@@ -180,6 +193,11 @@ fn main() {
         println!("Coordinador: 'Se jugará la ronda {}: esta ronda será {}'", round + 1, round_type);
         tx_coord_table.send(round_type_number).unwrap();
 
+        if round_type_number == 1 {
+            println!("Coordinador: 'Digan \"Oxidado\" o \"Paso\"'");
+        }
+
+        general_barrier.wait();
         general_barrier.wait();
     }
 
