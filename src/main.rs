@@ -1,6 +1,6 @@
 use std::io;
 use std::thread;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Barrier};
 use rand::Rng;
 
 fn get_players_number() -> u32 {
@@ -75,6 +75,10 @@ fn main() {
     // Canal Jugadores -> Mesa
     // let (tx_players_table, rx_players_table) = mpsc::channel();
 
+    // Barrierss
+    let players_barrier = Arc::new(Barrier::new(players_number as usize));
+    let general_barrier = Arc::new(Barrier::new(players_number as usize + 2));
+
     // Canales Mesa -> JugadorX
     let mut tx_table_player = Vec::new();
     let mut rx_table_player = Vec::new();
@@ -84,24 +88,45 @@ fn main() {
         rx_table_player.push(rx);
     }
 
+    // JUGADORES
     // Creación de jugadores
     let mut players = Vec::new();
     for player in 0..players_number {
         let rx_table_player = rx_table_player.remove(0);
+        let player_barrier = players_barrier.clone();
+        let player_general_barrier = general_barrier.clone();
 
         let new_player = thread::spawn(move || {
             let mut cards = Vec::<u32>::new();
             for _card in 0..rounds {
                 let card_received = rx_table_player.recv().unwrap();
                 cards.push(card_received);
-                println!("Jugador {}: Recibí una carta. Ahora tengo {} cartas", player + 1, cards.len());
+                println!("Jugador {}: 'Recibí una carta. Ahora tengo {} cartas'", player + 1, cards.len());
+                player_barrier.wait();
+            }
+            player_general_barrier.wait();
+
+            // Rondas
+            for round in 0..rounds {
+                let round_type_number = rx_table_player.recv().unwrap();
+                let round_type;
+                if round_type_number == 0 {
+                    round_type = "silenciosa";
+                }
+                else {
+                    round_type = "hablada";
+                }
+                println!("Jugador {}: 'Escuché que la ronda {} será {}'", player + 1, round + 1, round_type);
+                player_general_barrier.wait();
             }
         });
 
         players.push(new_player);
     }
 
+    // MESA
     // Creación de la "mesa"
+    let table_barrier = general_barrier.clone();
     let table = thread::spawn(move || {
         let mut current_player = 0;
         for _card in 0..actual_total_cards {
@@ -110,16 +135,52 @@ fn main() {
             current_player = (current_player + 1) % (players_number as usize);
         }
 
+        table_barrier.wait();
+
+        // Rondas
+        for _ in 0..rounds {
+            let round_type_number = rx_coord_table.recv().unwrap();
+
+            for player in 0..players_number {
+                let player_type_number = round_type_number.clone();
+                tx_table_player[player as usize].send(player_type_number).unwrap();
+            }
+
+            table_barrier.wait();
+        }
+
+        // CREO QUE HAY QUE BORRARLO DESPUES
         for player in players {
             player.join().unwrap();
         }
     });
 
+    // COORDINADOR
     // Repartición de cartas
     for _card in 0..actual_total_cards {
         let remaining_cards = cards.len();
         let card = cards.remove(rand::thread_rng().gen_range(0, remaining_cards));
         tx_coord_table.send(card).unwrap();
+    }
+
+    general_barrier.wait();
+
+    // Rondas
+    for round in 0..rounds {
+        let round_type_number = rand::thread_rng().gen_range(0, 2);
+        let round_type;
+
+        if round_type_number == 0 {
+            round_type = "silenciosa";
+        }
+        else {
+            round_type = "hablada";
+        }
+
+        println!("Coordinador: 'Se jugará la ronda {}: esta ronda será {}'", round + 1, round_type);
+        tx_coord_table.send(round_type_number).unwrap();
+
+        general_barrier.wait();
     }
 
     table.join().unwrap();
