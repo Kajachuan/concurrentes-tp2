@@ -1,6 +1,7 @@
 use std::io;
 use std::thread;
 use std::sync::{mpsc, Arc, Barrier};
+use std::collections::HashMap;
 use rand::Rng;
 
 fn get_players_number() -> u32 {
@@ -48,16 +49,17 @@ fn get_players_number() -> u32 {
 
 fn main() {
     let players_number = get_players_number();
-    println!("Coordinador: 'El juego iniciará con {:?} jugadores'", players_number);
+    println!("Coordinador: 'El juego iniciará con {} jugadores'", players_number);
 
     const TOTAL_CARDS: u32 = 48;
 
     // Baraja completa
-    let mut cards = Vec::new();
+    let mut cards = Vec::<String>::new();
     for card_value in 1..13 {
-        for _suit in 0..4 {
-            cards.push(card_value);
-        }
+        cards.push(format!("{} de Copas", card_value));
+        cards.push(format!("{} de Oros", card_value));
+        cards.push(format!("{} de Bastos", card_value));
+        cards.push(format!("{} de Espadas", card_value));
     }
 
     // Cálculo de rondas
@@ -66,24 +68,24 @@ fn main() {
 
     let actual_total_cards = rounds * players_number;
 
-    // Canal Coordinador -> Mesa
-    let (tx_coord_table, rx_coord_table) = mpsc::channel::<u32>();
-
-    // Canal Mesa -> Coordinador
-    // let (tx_table_coord, rx_table_coord) = mpsc::channel();
-
-    // Canal Jugadores -> Mesa
-    // let (tx_players_table, rx_players_table) = mpsc::channel();
-
-    // Barrierss
+    // Barriers
     let players_barrier = Arc::new(Barrier::new(players_number as usize));
     let general_barrier = Arc::new(Barrier::new(players_number as usize + 2));
+
+    // Canal Coordinador -> Mesa
+    let (tx_coord_table, rx_coord_table) = mpsc::channel::<String>();
+
+    // Canal Mesa -> Coordinador
+    let (tx_table_coord, rx_table_coord) = mpsc::channel::<String>();
+
+    // Canal Jugadores -> Mesa
+    let (tx_players_table, rx_players_table) = mpsc::channel::<String>();
 
     // Canales Mesa -> JugadorX
     let mut tx_table_player = Vec::new();
     let mut rx_table_player = Vec::new();
     for _player in 0..players_number {
-        let (tx, rx) = mpsc::channel::<u32>();
+        let (tx, rx) = mpsc::channel::<String>();
         tx_table_player.push(tx);
         rx_table_player.push(rx);
     }
@@ -93,30 +95,24 @@ fn main() {
     let mut players = Vec::new();
     for player in 0..players_number {
         let rx_table_player = rx_table_player.remove(0);
+        let tx_player_table = tx_players_table.clone();
         let player_barrier = players_barrier.clone();
         let player_general_barrier = general_barrier.clone();
 
         let new_player = thread::spawn(move || {
-            let mut cards = Vec::<u32>::new();
+            let mut cards = Vec::<String>::new();
             for _card in 0..rounds {
                 let card_received = rx_table_player.recv().unwrap();
                 cards.push(card_received);
-                println!("Jugador {}: 'Recibí una carta. Ahora tengo {} cartas'", player + 1, cards.len());
+                println!("* El jugador {} recibió una carta, ahora tiene {} cartas *", player + 1, cards.len());
                 player_barrier.wait();
             }
             player_general_barrier.wait();
 
             // Rondas
             for round in 0..rounds {
-                let round_type_number = rx_table_player.recv().unwrap();
-                let round_type;
-                if round_type_number == 0 {
-                    round_type = "silenciosa";
-                }
-                else {
-                    round_type = "hablada";
-                }
-                println!("Jugador {}: 'Escuché que la ronda {} será {}'", player + 1, round + 1, round_type);
+                let round_type = rx_table_player.recv().unwrap();
+                println!("* El jugador {} escuchó que la ronda {} será {} *", player + 1, round + 1, round_type);
                 let player_choice_number = rand::thread_rng().gen_range(0, 2);
                 let player_choice;
                 if player_choice_number == 0 {
@@ -126,8 +122,17 @@ fn main() {
                     player_choice = "Oxidado";
                 }
                 player_general_barrier.wait();
-                if round_type_number == 1 {
-                    println!("Jugador {}: {}", player + 1, player_choice);
+                if round_type == "hablada" {
+                    println!("Jugador {}: '{}'", player + 1, player_choice);
+                    tx_player_table.send(format!("{}:{}",player + 1, player_choice)).unwrap();
+                    for _ in 0..players_number {
+                        let other_player_choice = rx_table_player.recv().unwrap();
+                        let data: Vec<&str> = other_player_choice.split(':').collect();
+                        if data[0] == format!("{}", player + 1) {
+                            continue;
+                        }
+                        println!("* El jugador {} escuchó que el jugador {} dijo {} *", player + 1, data[0], data[1]);
+                    }
                 }
                 player_general_barrier.wait();
             }
@@ -141,6 +146,7 @@ fn main() {
     let table_barrier = general_barrier.clone();
     let table = thread::spawn(move || {
         let mut current_player = 0;
+        // Recibe y envia las cartas repartidas
         for _card in 0..actual_total_cards {
             let card_received = rx_coord_table.recv().unwrap();
             tx_table_player[current_player].send(card_received).unwrap();
@@ -151,18 +157,28 @@ fn main() {
 
         // Rondas
         for _ in 0..rounds {
-            let round_type_number = rx_coord_table.recv().unwrap();
+            let round_type = rx_coord_table.recv().unwrap();
 
             for player in 0..players_number {
-                let player_type_number = round_type_number.clone();
-                tx_table_player[player as usize].send(player_type_number).unwrap();
+                let player_round_type = round_type.clone();
+                tx_table_player[player as usize].send(player_round_type).unwrap();
             }
 
             table_barrier.wait();
+            if round_type == "hablada" {
+                for _ in 0..players_number {
+                    let player_choice = rx_players_table.recv().unwrap();
+                    let player_choice_message = player_choice.clone();
+                    tx_table_coord.send(player_choice_message).unwrap();
+                    for player in 0..players_number {
+                        let player_choice_message = player_choice.clone();
+                        tx_table_player[player as usize].send(player_choice_message).unwrap();
+                    }
+                }
+            }
             table_barrier.wait();
         }
 
-        // CREO QUE HAY QUE BORRARLO DESPUES
         for player in players {
             player.join().unwrap();
         }
@@ -184,20 +200,31 @@ fn main() {
         let round_type;
 
         if round_type_number == 0 {
-            round_type = "silenciosa";
+            round_type = String::from("silenciosa");
         }
         else {
-            round_type = "hablada";
+            round_type = String::from("hablada");
         }
 
         println!("Coordinador: 'Se jugará la ronda {}: esta ronda será {}'", round + 1, round_type);
-        tx_coord_table.send(round_type_number).unwrap();
+        let round_type_message = round_type.clone();
+        tx_coord_table.send(round_type_message).unwrap();
 
         if round_type_number == 1 {
             println!("Coordinador: 'Digan \"Oxidado\" o \"Paso\"'");
         }
 
         general_barrier.wait();
+
+        let mut options = HashMap::<String, String>::new();
+        if round_type == "hablada" {
+            for _ in 0..players_number {
+                let other_player_choice = rx_table_coord.recv().unwrap();
+                let data: Vec<&str> = other_player_choice.split(':').collect();
+                println!("* El coordinador escuchó que el jugador {} dijo {} *", data[0], data[1]);
+                options.insert(String::from(data[0]), String::from(data[1]));
+            }
+        }
         general_barrier.wait();
     }
 
