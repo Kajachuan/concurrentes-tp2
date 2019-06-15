@@ -124,7 +124,7 @@ fn main() {
                 player_general_barrier.wait();
                 if round_type == "hablada" {
                     println!("Jugador {}: '{}'", player + 1, player_choice);
-                    tx_player_table.send(format!("{}:{}",player + 1, player_choice)).unwrap();
+                    tx_player_table.send(format!("{}:{}", player + 1, player_choice)).unwrap();
                     for _ in 0..players_number {
                         let other_player_choice = rx_table_player.recv().unwrap();
                         let data: Vec<&str> = other_player_choice.split(':').collect();
@@ -134,6 +134,11 @@ fn main() {
                         println!("* El jugador {} escuchó que el jugador {} dijo {} *", player + 1, data[0], data[1]);
                     }
                 }
+                player_general_barrier.wait();
+
+                // Cartas
+                let current_card = cards.pop().unwrap();
+                tx_player_table.send(format!("{}:{}", player + 1, current_card)).unwrap();
                 player_general_barrier.wait();
             }
         });
@@ -177,6 +182,14 @@ fn main() {
                 }
             }
             table_barrier.wait();
+
+            // Cartas
+            for _ in 0..players_number {
+                let player_card = rx_players_table.recv().unwrap();
+                tx_table_coord.send(player_card).unwrap();
+            }
+            table_barrier.wait();
+
         }
 
         for player in players {
@@ -195,6 +208,7 @@ fn main() {
     general_barrier.wait();
 
     // Rondas
+    let mut scoreboard = vec![0; players_number as usize];
     for round in 0..rounds {
         let round_type_number = rand::thread_rng().gen_range(0, 2);
         let round_type;
@@ -216,16 +230,98 @@ fn main() {
 
         general_barrier.wait();
 
-        let mut options = HashMap::<String, String>::new();
+        let mut choices = HashMap::<String, String>::new();
         if round_type == "hablada" {
             for _ in 0..players_number {
-                let other_player_choice = rx_table_coord.recv().unwrap();
-                let data: Vec<&str> = other_player_choice.split(':').collect();
+                let player_choice = rx_table_coord.recv().unwrap();
+                let data: Vec<&str> = player_choice.split(':').collect();
                 println!("* El coordinador escuchó que el jugador {} dijo {} *", data[0], data[1]);
-                options.insert(String::from(data[0]), String::from(data[1]));
+                choices.insert(String::from(data[0]), String::from(data[1]));
             }
         }
         general_barrier.wait();
+
+        // Cartas
+        let mut players_cards = HashMap::<String, u32>::new();
+        let mut first_player = String::new();
+        let mut last_player = String::new();
+        for player in 0..players_number {
+            let player_card = rx_table_coord.recv().unwrap();
+            let data: Vec<&str> = player_card.split(':').collect();
+            println!("* El jugador {} colocó la carta \"{}\" sobre el pilón central *", data[0], data[1]);
+            if player == 0 {
+                first_player = String::from(data[0]);
+            } else if player == players_number - 1 {
+                last_player = String::from(data[0]);
+            }
+            let player_card = data[1];
+            let data_card: Vec<&str> = player_card.split(' ').collect();
+            let card_value = data_card[0].parse::<u32>().unwrap();
+            players_cards.insert(String::from(data[0]), card_value);
+        }
+
+        let mut max_card = 0;
+        let mut max_players = Vec::<String>::new();
+        for (player, card) in players_cards {
+            if card > max_card {
+                max_card = card;
+                max_players = vec![player];
+            } else if card == max_card {
+                max_players.push(player);
+            }
+        }
+
+        println!("Coordinador: 'El jugador que apoyó primero su carta es el jugador {}: Recibe 1 punto'", first_player);
+        scoreboard[first_player.parse::<usize>().unwrap() - 1] += 1;
+        println!("Coordinador: 'El jugador que apoyó último su carta es el jugador {}: Pierde 1 punto'", last_player);
+        scoreboard[last_player.parse::<usize>().unwrap() - 1] -= 1;
+        for max_player in max_players {
+            println!("Coordinador: 'El jugador con la carta más alta es el jugador {}: Recibe 10 puntos'", max_player);
+            scoreboard[max_player.parse::<usize>().unwrap() - 1] += 10;
+            if round_type == "hablada" && choices.get(&max_player).unwrap() == "Oxidado" {
+                choices.remove(&max_player);
+                println!("Coordinador: 'El jugador {} había dicho \"Oxidado\" y tiene la carta más alta: Recibe 5 puntos'", max_player);
+                scoreboard[max_player.parse::<usize>().unwrap() - 1] += 5;
+            }
+        }
+
+        if round_type == "hablada" {
+            for (player, choice) in choices {
+                if choice == "Oxidado" {
+                    println!("Coordinador: 'El jugador {} había dicho \"Oxidado\" y no tiene la carta más alta: Pierde 5 puntos'", player);
+                    scoreboard[player.parse::<usize>().unwrap() - 1] -= 5;
+                }
+            }
+        }
+
+        let mut player_id = 1;
+        for score in &scoreboard {
+            println!("Coordinador: 'La puntuación actual del jugador {} es de {} puntos", player_id, score);
+            player_id += 1;
+        }
+
+        general_barrier.wait();
+    }
+
+    let mut max_score = scoreboard[0];
+    let mut winners = Vec::new();
+    for player in 0..scoreboard.len() {
+        if scoreboard[player] > max_score {
+            max_score = scoreboard[player];
+            winners = vec![player + 1];
+        } else if scoreboard[player] == max_score {
+            winners.push(player + 1);
+        }
+    }
+
+    if winners.len() == 1 {
+        println!("Coordinador: '¡El jugador {} es el ganador con {} puntos! ¡Felicidades!'", winners[0], max_score);
+    } else {
+        println!("Coordinador: '¡Hay empate!'");
+        for winner in winners {
+            println!("Coordinador: '¡El jugador {} es uno de los ganadores con {} puntos!'", winner, max_score);
+        }
+        println!("Coordinador: '¡Felicidades!'")
     }
 
     table.join().unwrap();
