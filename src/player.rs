@@ -6,7 +6,7 @@ const TOTAL_CARDS: u32 = 48;
 
 fn get_dealt_cards(player_number: u32, rounds: u32, rx_table_player: &mpsc::Receiver<String>) -> Vec<String> {
     let mut cards = Vec::<String>::new();
-    for _card in 0..rounds {
+    for _ in 0..rounds {
         let card_received = rx_table_player.recv().unwrap();
         cards.push(card_received);
         println!("* El jugador {} recibió una carta, ahora tiene {} cartas *", player_number, cards.len());

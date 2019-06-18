@@ -14,7 +14,7 @@ fn deal_cards(total_cards: u32, tx_coord_table: &mpsc::Sender<String>) {
         cards.push(format!("{} de Espadas", card_value));
     }
 
-    for _card in 0..total_cards {
+    for _ in 0..total_cards {
         let remaining_cards = cards.len();
         let card = cards.remove(rand::thread_rng().gen_range(0, remaining_cards));
         tx_coord_table.send(card).unwrap();

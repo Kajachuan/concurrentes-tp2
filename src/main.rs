@@ -63,7 +63,7 @@ fn main() {
     // Canales Mesa -> JugadorX
     let mut tx_table_player = Vec::new();
     let mut rx_table_player = Vec::new();
-    for _player in 0..players_number {
+    for _ in 0..players_number {
         let (tx, rx) = mpsc::channel::<String>();
         tx_table_player.push(tx);
         rx_table_player.push(rx);
