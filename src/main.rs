@@ -1,9 +1,11 @@
 use std::io;
+use std::env;
 use std::sync::{mpsc, Arc, Barrier};
 
 mod coordinator;
 mod table;
 mod player;
+mod outputer;
 
 fn get_players_number() -> u32 {
     println!("Ingrese la cantidad de jugadores:");
@@ -45,6 +47,15 @@ fn get_players_number() -> u32 {
 }
 
 fn main() {
+    let (tx_output, rx_output) = mpsc::channel::<String>();
+    let outputer;
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && &args[1] == "debug" {
+        outputer = outputer::init(true, rx_output);
+    } else {
+        outputer = outputer::init(false, rx_output);
+    }
+
     // Cantidad de jugadores
     let players_number = get_players_number();
 
@@ -74,10 +85,11 @@ fn main() {
     for player in 0..players_number {
         let rx_table_player = rx_table_player.remove(0);
         let tx_player_table = tx_players_table.clone();
+        let tx_output_player = tx_output.clone();
         let player_barrier = barrier.clone();
 
         let new_player = player::init(player + 1, players_number, rx_table_player,
-                                      tx_player_table, player_barrier);
+                                      tx_player_table, tx_output_player, player_barrier);
         players.push(new_player);
     }
 
@@ -87,8 +99,12 @@ fn main() {
                             rx_players_table, tx_table_coord, table_barrier);
 
     // COORDINADOR
+    let tx_output_coordinator = tx_output.clone();
     let coordinator = coordinator::init(players_number, table, tx_coord_table,
-                                        rx_table_coord, barrier);
+                                        rx_table_coord, tx_output_coordinator, barrier);
 
     coordinator.join().unwrap();
+
+    tx_output.send(String::from("END")).unwrap();
+    outputer.join().unwrap();
 }

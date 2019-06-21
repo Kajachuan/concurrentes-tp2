@@ -21,7 +21,7 @@ fn deal_cards(total_cards: u32, tx_coord_table: &mpsc::Sender<String>) {
     }
 }
 
-fn tell_round_type(round_number: u32, tx_coord_table: &mpsc::Sender<String>) -> String {
+fn tell_round_type(round_number: u32, tx_coord_table: &mpsc::Sender<String>, tx_output: &mpsc::Sender<String>) -> String {
     let round_type_number = rand::thread_rng().gen_range(0, 2);
     let round_type;
 
@@ -31,38 +31,38 @@ fn tell_round_type(round_number: u32, tx_coord_table: &mpsc::Sender<String>) -> 
         round_type = String::from("hablada");
     }
 
-    println!("Coordinador: 'Se jugará la ronda {}: esta ronda será {}'", round_number, round_type);
+    tx_output.send(format!("Coordinador: 'Se jugará la ronda {}: esta ronda será {}'", round_number, round_type)).unwrap();
     let round_type_message = round_type.clone();
     tx_coord_table.send(round_type_message).unwrap();
 
     if round_type_number == 1 {
-        println!("Coordinador: 'Digan \"Oxidado\" o \"Paso\"'");
+        tx_output.send(format!("Coordinador: 'Digan \"Oxidado\" o \"Paso\"'")).unwrap();
     }
 
     return round_type;
 }
 
-fn listen_to_players(round_type: &String, players_number: u32, rx_table_coord: &mpsc::Receiver<String>) -> HashMap::<String, String> {
+fn listen_to_players(round_type: &String, players_number: u32, rx_table_coord: &mpsc::Receiver<String>, tx_output: &mpsc::Sender<String>) -> HashMap::<String, String> {
     let mut choices = HashMap::<String, String>::new();
     if round_type == "hablada" {
         for _ in 0..players_number {
             let player_choice = rx_table_coord.recv().unwrap();
             let data: Vec<&str> = player_choice.split(':').collect();
-            println!("* El coordinador escuchó que el jugador {} dijo {} *", data[0], data[1]);
+            tx_output.send(format!("* El coordinador escuchó que el jugador {} dijo {} *", data[0], data[1])).unwrap();
             choices.insert(String::from(data[0]), String::from(data[1]));
         }
     }
     return choices
 }
 
-fn get_players_cards(players_number: u32, rx_table_coord: &mpsc::Receiver<String>) -> (HashMap::<String, u32>, String, String) {
+fn get_players_cards(players_number: u32, rx_table_coord: &mpsc::Receiver<String>, tx_output: &mpsc::Sender<String>) -> (HashMap::<String, u32>, String, String) {
     let mut players_cards = HashMap::<String, u32>::new();
     let mut first_player = String::new();
     let mut last_player = String::new();
     for player in 0..players_number {
         let player_card = rx_table_coord.recv().unwrap();
         let data: Vec<&str> = player_card.split(':').collect();
-        println!("* El jugador {} colocó la carta \"{}\" sobre el pilón central *", data[0], data[1]);
+        tx_output.send(format!("* El jugador {} colocó la carta \"{}\" sobre el pilón central *", data[0], data[1])).unwrap();
         if player == 0 {
             first_player = String::from(data[0]);
         } else if player == players_number - 1 {
@@ -90,17 +90,17 @@ fn get_players_with_higher_card(players_cards: HashMap::<String, u32>) -> Vec::<
     return max_players;
 }
 
-fn tell_players_score(round_type: String, scoreboard: &mut Vec::<i32>, choices: &mut HashMap::<String, String>, first_player: String, last_player: String, max_players: Vec::<String>) {
-    println!("Coordinador: 'El jugador que apoyó primero su carta es el jugador {}: Recibe 1 punto'", first_player);
+fn tell_players_score(round_type: String, scoreboard: &mut Vec::<i32>, choices: &mut HashMap::<String, String>, first_player: String, last_player: String, max_players: Vec::<String>, tx_output: &mpsc::Sender<String>) {
+    tx_output.send(format!("Coordinador: 'El jugador que apoyó primero su carta es el jugador {}: Recibe 1 punto'", first_player)).unwrap();
     scoreboard[first_player.parse::<usize>().unwrap() - 1] += 1;
-    println!("Coordinador: 'El jugador que apoyó último su carta es el jugador {}: Pierde 1 punto'", last_player);
+    tx_output.send(format!("Coordinador: 'El jugador que apoyó último su carta es el jugador {}: Pierde 1 punto'", last_player)).unwrap();
     scoreboard[last_player.parse::<usize>().unwrap() - 1] -= 1;
     for max_player in max_players {
-        println!("Coordinador: 'El jugador con la carta más alta es el jugador {}: Recibe 10 puntos'", max_player);
+        tx_output.send(format!("Coordinador: 'El jugador con la carta más alta es el jugador {}: Recibe 10 puntos'", max_player)).unwrap();
         scoreboard[max_player.parse::<usize>().unwrap() - 1] += 10;
         if round_type == "hablada" && choices.get(&max_player).unwrap() == "Oxidado" {
             choices.remove(&max_player);
-            println!("Coordinador: 'El jugador {} había dicho \"Oxidado\" y tiene la carta más alta: Recibe 5 puntos'", max_player);
+            tx_output.send(format!("Coordinador: 'El jugador {} había dicho \"Oxidado\" y tiene la carta más alta: Recibe 5 puntos'", max_player)).unwrap();
             scoreboard[max_player.parse::<usize>().unwrap() - 1] += 5;
         }
     }
@@ -108,7 +108,7 @@ fn tell_players_score(round_type: String, scoreboard: &mut Vec::<i32>, choices: 
     if round_type == "hablada" {
         for (player, choice) in choices {
             if choice == "Oxidado" {
-                println!("Coordinador: 'El jugador {} había dicho \"Oxidado\" y no tiene la carta más alta: Pierde 5 puntos'", player);
+                tx_output.send(format!("Coordinador: 'El jugador {} había dicho \"Oxidado\" y no tiene la carta más alta: Pierde 5 puntos'", player)).unwrap();
                 scoreboard[player.parse::<usize>().unwrap() - 1] -= 5;
             }
         }
@@ -116,12 +116,12 @@ fn tell_players_score(round_type: String, scoreboard: &mut Vec::<i32>, choices: 
 
     let mut player_id = 1;
     for score in scoreboard {
-        println!("Coordinador: 'La puntuación actual del jugador {} es de {} puntos", player_id, score);
+        tx_output.send(format!("Coordinador: 'La puntuación actual del jugador {} es de {} puntos", player_id, score)).unwrap();
         player_id += 1;
     }
 }
 
-fn tell_winners(scoreboard: Vec::<i32>) {
+fn tell_winners(scoreboard: Vec::<i32>, tx_output: &mpsc::Sender<String>) {
     let mut max_score = scoreboard[0];
     let mut winners = Vec::new();
     for player in 0..scoreboard.len() {
@@ -134,13 +134,13 @@ fn tell_winners(scoreboard: Vec::<i32>) {
     }
 
     if winners.len() == 1 {
-        println!("Coordinador: '¡El jugador {} es el ganador con {} puntos! ¡Felicidades!'", winners[0], max_score);
+        tx_output.send(format!("Coordinador: '¡El jugador {} es el ganador con {} puntos! ¡Felicidades!'", winners[0], max_score)).unwrap();
     } else {
-        println!("Coordinador: '¡Hay empate!'");
+        tx_output.send(format!("Coordinador: '¡Hay empate!'")).unwrap();
         for winner in winners {
-            println!("Coordinador: '¡El jugador {} es uno de los ganadores con {} puntos!'", winner, max_score);
+            tx_output.send(format!("Coordinador: '¡El jugador {} es uno de los ganadores con {} puntos!'", winner, max_score)).unwrap();
         }
-        println!("Coordinador: '¡Felicidades!'")
+        tx_output.send(format!("Coordinador: '¡Felicidades!'")).unwrap();
     }
 }
 
@@ -148,37 +148,38 @@ pub fn init(players_number: u32,
             table:          thread::JoinHandle<()>,
             tx_coord_table: mpsc::Sender<String>,
             rx_table_coord: mpsc::Receiver<String>,
+            tx_output:      mpsc::Sender<String>,
             barrier:        Arc<Barrier>) -> thread::JoinHandle<()> {
 
     let rounds = TOTAL_CARDS / players_number;
     let total_cards = rounds * players_number;
 
     return thread::spawn(move || {
-        println!("Coordinador: 'El juego iniciará con {} jugadores'", players_number);
+        tx_output.send(format!("Coordinador: 'El juego iniciará con {} jugadores'", players_number)).unwrap();
 
-        println!("Coordinador: 'Se jugarán {} rondas'", rounds);
+        tx_output.send(format!("Coordinador: 'Se jugarán {} rondas'", rounds)).unwrap();
 
         deal_cards(total_cards, &tx_coord_table);
         barrier.wait();
 
         let mut scoreboard = vec![0; players_number as usize];
         for round in 0..rounds {
-            let round_type = tell_round_type(round + 1, &tx_coord_table);
+            let round_type = tell_round_type(round + 1, &tx_coord_table, &tx_output);
             barrier.wait();
 
-            let mut choices = listen_to_players(&round_type, players_number, &rx_table_coord);
+            let mut choices = listen_to_players(&round_type, players_number, &rx_table_coord, &tx_output);
             barrier.wait();
 
-            let (players_cards, first_player, last_player) = get_players_cards(players_number, &rx_table_coord);
+            let (players_cards, first_player, last_player) = get_players_cards(players_number, &rx_table_coord, &tx_output);
 
             let max_players = get_players_with_higher_card(players_cards);
 
-            tell_players_score(round_type, &mut scoreboard, &mut choices, first_player, last_player, max_players);
+            tell_players_score(round_type, &mut scoreboard, &mut choices, first_player, last_player, max_players, &tx_output);
 
             barrier.wait();
         }
 
-        tell_winners(scoreboard);
+        tell_winners(scoreboard, &tx_output);
 
         table.join().unwrap();
     });
